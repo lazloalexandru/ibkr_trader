@@ -1,80 +1,60 @@
-from datetime import date
-from datetime import datetime
+import datetime
 import queue
 from termcolor import colored
-from ibapi.client import EClient
-from ibapi.wrapper import EWrapper, BarData
 import threading
 import time
 import pandas as pd
 from ibapi.contract import Contract
+import common_algos as ca
+import curses
+from my_ibapi_app import IBApi
 
 
-class IBApi(EWrapper, EClient):
-    def __init__(self):
-        EClient.__init__(self, self)
-        bar_data = []
+__params = {
+    'chart_begin_hh': 15,
+    'chart_begin_mm': 15,
 
-    def init_error(self):
-        error_queue = queue.Queue()
-        self.my_errors_queue = error_queue
+    'chart_end_hh': 19,
+    'chart_end_mm': 0,
 
-    def get_error(self, timeout=6):
-        if self.is_error():
-            try:
-                return self.my_errors_queue.get(timeout=timeout)
-            except queue.Empty:
-                return None
-        return None
+    'trading_begin_hh': 16,
+    'trading_begin_mm': 41,
 
-    def is_error(self):
-        error_exist = not self.my_errors_queue.empty()
-        return error_exist
+    'last_entry_hh': 17,
+    'last_entry_mm': 30,
 
-    def init_req_queue(self):
-        req_queue = queue.Queue()
-        self.req_queue = req_queue
-        return req_queue
+    'mavs': 3,
+    'mavm': 8,
+    'mavl': 21,
 
-    def nextValidId(self, orderId: int):
-        super().nextValidId(orderId)
-        self.nextorderId = orderId
+    'min_bagholder_score': 3,
+    'max_range_score': 95,
+    'vol_pattern_length': 3,
 
-    def error(self, id, errorCode, errorString):
-        if errorCode != 2104 and errorCode != 2106 and errorCode != 2158:
-            errormessage = "IB returns an error with %d errorcode %d that says %s" % (id, errorCode, errorString)
-            print(colored(errormessage, color='red'))
-            self.my_errors_queue.put(errormessage)
+    'min_close_price': 1.5,
 
-    def historicalData(self, reqId, bar):
-        # date_time_obj = datetime.datetime.strptime(bar.date, '%Y%m%d')
-        # print(date_time_obj.date())
-        # print(f'Time: {bar.date} Open: {bar.open} Close: {bar.close}')
-        # if bar.date == "20190329":
-        #    print(bar)
+    'min_volume_x_price': 200000,
+    'volume_jump_factor': 1.01,
+    'mavl_distance_factor': 1.9,
 
-        self.data.append([bar.date, bar.open, bar.close,  bar.high, bar.low, bar.volume * 100])
-
-    def historicalDataUpdate(self, reqId: int, bar: BarData):
-        if bar.date == app.data[-1][0]:
-            self.data[-1] = [bar.date, bar.open, bar.close, bar.high, bar.low, bar.volume * 100]
-        else:
-            self.data.append([bar.date, bar.open, bar.close, bar.high, bar.low, bar.volume * 100])
-        self.req_queue.put(reqId)
-
-    def historicalDataEnd(self, reqId:int, start:str, end:str):
-        self.req_queue.put(reqId)
+    'stop': -7,
+    'target': 15,
+    'account_value': 10000,
+    'size_limit': 50000
+    }
 
 
-def run_loop():
+def run_loop(app):
     app.run()
 
 
 def init_ibkr():
+    app = IBApi()
+
     app.init_error()
 
     app.connect('127.0.0.1', 7497, 2112)
-    api_thread = threading.Thread(target=run_loop, daemon=True)
+    api_thread = threading.Thread(target=run_loop, args=(app,), daemon=True)
     api_thread.start()
 
     app.nextorderId = None
@@ -88,95 +68,24 @@ def init_ibkr():
             print('Waiting for connection ...')
             time.sleep(1)
 
-
-def _get_bagholder_score(dff):
-    score = 0
-
-    df = dff.copy()
-
-    df["Time"] = pd.to_datetime(df["Time"], format="%Y%m%d")
-
-    date_ = pd.to_datetime(date.today(), format="%Y-%m-%d")
-
-    x_idx = df.index[df['Time'] == date_].tolist()
-    if len(x_idx) > 0:
-        x_pos = x_idx[0]
-        i = x_pos-1
-        bvol = 0
-        while i > 0 and x_pos-i < 200:
-            if df.loc[i]['High'] > df.loc[x_pos]['Open']:
-                bvol = bvol + df.loc[i]['Volume']
-            i = i-1
-
-        if bvol == 0:
-            score = 5
-        elif bvol < 1000000:
-            score = 4
-        elif bvol < 10000000:
-            score = 3
-        elif bvol < 30000000:
-            score = 2
-        elif bvol > 30000000:
-            score = 1
-
-        print("Bagholder Volume: " + f'{bvol:,}')
-
-    return score
+    return app
 
 
-def _calc_last_bar_range_score(df):
-    n = len(df)
+def contract(symbol):
+    c = Contract()
+    c.symbol = symbol
+    c.secType = 'STK'
+    c.exchange = 'SMART'
+    c.currency = 'USD'
 
-    zzz = pd.DataFrame(columns=['idx', 'range'])
-
-    for i in range(0, n):
-        data = {'idx': i,
-                'range': df.iloc[i]['High'] - df.iloc[i]['Low']}
-        zzz = zzz.append(data, ignore_index=True)
-
-    zzz = zzz.set_index(zzz.idx)
-    zzz = zzz.sort_values(by='range', ascending=True)
-
-    score = [0] * n
-    for i in range(0, n-1):
-        score[int(zzz.iloc[i]['idx'])] = int(100 * i / n)
-
-    return score[-1]
+    return c
 
 
-def _calc_num_volumes_lower(df):
-    num = []
-    n = len(df)
-    for i in range(0, n):
-        j = i
-        is_bigger = True
-        cnt = 0
-        while j > 0 and is_bigger:
-            j = j - 1
-            is_bigger = df.iloc[j]['Volume'] < df.iloc[i]['Volume']
-            if is_bigger:
-                cnt = cnt + 1
+def calc_bagholder_score_from_ibkr_chart(app, req_store, symbol, scr):
+    scr.addstr(1, 0, "Downloading " + symbol + " daily chart ...", curses.color_pair(2))
+    scr.refresh()
 
-        num.append(cnt)
-
-    df.insert(2, "vol_high_count", num)
-
-    return df
-
-
-def trader(symbol, params):
-    # Create contract object
-    contract = Contract()
-    contract.symbol = symbol
-    contract.secType = 'STK'
-    contract.exchange = 'SMART'
-    contract.currency = 'USD'
-
-    req_store = app.init_req_queue()
-
-    app.data = []
-
-    app.reqHistoricalData(2000, contract, "", '3 Y', '1 day', 'TRADES', 1, 1, False, [])
+    app.reqHistoricalData(2000, contract(symbol), "", '3 Y', '1 day', 'TRADES', 1, 1, False, [])
 
     xxx = None
     while not app.wrapper.is_error() and xxx is None:
@@ -191,7 +100,10 @@ def trader(symbol, params):
 
     message = "Queried " + symbol + " Daily chart for " + str(len(app.data)) + " days"
 
-    bs = 0
+    scr.addstr(4, 0, message, curses.color_pair(2))
+    scr.refresh()
+
+    bs = None
 
     if len(app.data) == 0:
         print(colored(message, 'red'))
@@ -199,13 +111,33 @@ def trader(symbol, params):
         print(message, "\n")
         df = pd.DataFrame(app.data, columns=["Time", "Open", "Close", "High", "Low", "Volume"])
 
-        bs = _get_bagholder_score(df)
+        bs = ca.get_bagholder_score1(df)
 
-    tr_begin_time = pd.datetime.datetime.now()
+    return bs
+
+
+def trader(app, scr, symbol, params):
+    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+
+    ibkr_contract = contract(symbol)
+
+    req_store = app.init_req_queue()
+
+    app.data = []
+
+    bs = calc_bagholder_score_from_ibkr_chart(app, req_store, symbol, scr)
+
+    scr.clear()
+    scr.addstr(0, 0, symbol + " bagholder_score: " + str(bs), curses.color_pair(2))
+    scr.refresh()
+
+    tr_begin_time = datetime.datetime.now()
     tr_begin_time = tr_begin_time.replace(hour=params['trading_begin_hh'], minute=params['trading_begin_mm'], second=0)
-    last_entry_time = pd.datetime.datetime.now()
+    last_entry_time = datetime.datetime.now()
     last_entry_time = last_entry_time.replace(hour=params['last_entry_hh'], minute=params['last_entry_mm'], second=0)
-    forced_sell_time = pd.datetime.datetime.now()
+    forced_sell_time = datetime.datetime.now()
     forced_sell_time = forced_sell_time.replace(hour=params['chart_end_hh'], minute=params['chart_end_hh'], second=0)
 
     print("Trading Begins Time: ", tr_begin_time.time())
@@ -214,9 +146,11 @@ def trader(symbol, params):
 
     app.data = []
 
-    app.reqHistoricalData(2001, contract, "", '1 D', '1 min', 'TRADES', 0, 1, True, [])
+    app.reqHistoricalData(2001, ibkr_contract, "", '1 D', '1 min', 'TRADES', 0, 1, True, [])
 
     while True:
+        scr.addstr(0, 40, "...", curses.color_pair(2))
+        scr.refresh()
 
         xxx = None
         num_tries = 0
@@ -228,10 +162,13 @@ def trader(symbol, params):
                 print(".", end="", flush=True)
                 xxx = None
 
+        scr.addstr(0, 40, "   ", curses.color_pair(2))
+        scr.refresh()
+
         df = pd.DataFrame(app.data, columns=["Time", "Open", "Close", "High", "Low", "Volume"])
 
-        rs = _calc_last_bar_range_score(df)
-        df = _calc_num_volumes_lower(df)
+        rs = ca.calc_last_bar_range_score(df)
+        df = ca.calc_num_volumes_lower(df)
 
         df['mavs'] = df['Close'].rolling(window=params['mavs']).mean()
         df['mavm'] = df['Close'].rolling(window=params['mavm']).mean()
@@ -245,6 +182,11 @@ def trader(symbol, params):
 
         ali_closed = df.iloc[-1]['mavs'] < df.iloc[-1]['mavm'] < df.iloc[-1]['mavl']
         ali_opened = df.iloc[-1]['mavs'] > df.iloc[-1]['mavm'] > df.iloc[-1]['mavl']
+
+        scr.clear()
+        scr.addstr(2, 0, "%.2f" % df.iloc[-1]["Close"] + "$", curses.color_pair(3))
+        scr.refresh()
+
         print(colored("SELL Signal [Active]  " if ali_closed else "SELL Signal [Inactive]  ", "yellow" if ali_closed else "grey"),
               colored(str(_t.time()) + "  ", "green" if tr_begin_time < _t < last_entry_time else "red"),
               colored("%.2f" % df.iloc[-1]["Close"] + "$  ", "green" if df.iloc[-1]["Close"] > params['min_close_price'] else "red"),
@@ -261,40 +203,23 @@ def trader(symbol, params):
 #################################
 
 
-__params = {'chart_begin_hh': 15,
-            'chart_begin_mm': 15,
+def main(scr):
+    curses.curs_set(0)
 
-            'chart_end_hh': 19,
-            'chart_end_mm': 0,
+    scr.clear()
+    scr.addstr(0, 0, "Connecting to TWS ...", curses.color_pair(1))
+    scr.refresh()
 
-            'trading_begin_hh': 16,
-            'trading_begin_mm': 41,
+    app = init_ibkr()
 
-            'last_entry_hh': 17,
-            'last_entry_mm': 30,
+    scr.addstr(0, 30, "Connected!", curses.color_pair(3))
+    scr.refresh()
 
-            'mavs': 3,
-            'mavm': 8,
-            'mavl': 21,
-
-            'min_bagholder_score': 3,
-            'max_range_score': 95,
-            'vol_pattern_length': 3,
-
-            'min_close_price': 1.5,
-
-            'min_volume_x_price': 200000,
-            'volume_jump_factor': 1.01,
-            'mavl_distance_factor': 1.9,
-
-            'stop': -7,
-            'target': 15,
-            'account_value': 10000,
-            'size_limit': 50000}
+    trader(app, scr, symbol="MRIN", params=__params)
 
 
-app = IBApi()
-init_ibkr()
+curses.wrapper(main)
 
-trader(symbol="HTZ", params=__params)
+
+
 
