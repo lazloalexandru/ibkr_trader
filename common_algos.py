@@ -3,39 +3,36 @@ import pandas as pd
 import datetime
 
 
-def get_recent_low(df, idx, duration):
-    res = None
+def get_last_period_low(df, duration):
 
-    if duration < 0:
+    if duration < 1:
         print(colored("Warning! Duration value " + str(duration) + " below zero!", color='red'))
-        duration = 0
+        duration = 1
 
+    idx = df.index[-1]
     idx_s = idx - duration
-    if idx_s < 0:
-        idx_s = 0
 
-    n = df.index[-1]
-    if idx_s < idx < n:
-        res = min(df.loc[idx_s:idx]['Low'])
+    if idx_s < df.index[0]:
+        idx_s = df.index[0]
+
+    res = min(df.iloc[idx_s:idx]['Low'])
 
     return res
 
 
-def get_recent_high(df, idx, duration):
-    res = None
+def get_last_period_high(df, duration):
 
     if duration < 0:
         print(colored("Warning! Duration value " + str(duration) + " below zero!", color='red'))
         duration = 0
 
+    idx = df.index[-1]
     idx_s = idx - duration
 
-    if idx_s < 0:
-        idx_s = 0
+    if idx_s < df.index[0]:
+        idx_s = df.index[0]
 
-    n = df.index[-1]
-    if idx_s < idx < n:
-        res = max(df.loc[idx_s:idx]['High'])
+    res = max(df.iloc[idx_s:idx]['High'])
 
     return res
 
@@ -79,37 +76,30 @@ def get_premarket_high(df):
     return val
 
 
-def get_bagholder_score1(dff):
+def get_bagholder_score(df):
     score = 0
 
-    df = dff.copy()
+    first_idx = df.index[0]
+    last_idx = df.index[-1]
 
-    df["Time"] = pd.to_datetime(df["Time"], format="%Y%m%d")
+    bvol = 0
+    i = last_idx - 1
 
-    date_ = pd.to_datetime(str(datetime.datetime.now().date()), format="%Y-%m-%d")
+    while first_idx <= i and last_idx-i < 200:
+        if df.loc[i]['High'] > df.loc[last_idx]['Close']:
+            bvol = bvol + df.loc[i]['Volume']
+        i = i-1
 
-    x_idx = df.index[df['Time'] == date_].tolist()
-    if len(x_idx) > 0:
-        x_pos = x_idx[0]
-        i = x_pos-1
-        bvol = 0
-        while i > 0 and x_pos-i < 200:
-            if df.loc[i]['High'] > df.loc[x_pos]['Open']:
-                bvol = bvol + df.loc[i]['Volume']
-            i = i-1
-
-        if bvol == 0:
-            score = 5
-        elif bvol < 1000000:
-            score = 4
-        elif bvol < 10000000:
-            score = 3
-        elif bvol < 30000000:
-            score = 2
-        elif bvol > 30000000:
-            score = 1
-
-        print("Bagholder Volume: " + f'{bvol:,}')
+    if bvol == 0:
+        score = 5
+    elif bvol < 1000000:
+        score = 4
+    elif bvol < 10000000:
+        score = 3
+    elif bvol < 30000000:
+        score = 2
+    elif bvol > 30000000:
+        score = 1
 
     return score
 
@@ -134,21 +124,36 @@ def calc_last_bar_range_score(df):
     return score[-1]
 
 
-def calc_num_volumes_lower(df):
-    num = []
+def calc_num_volumes_lower_last(df):
     n = len(df)
-    for i in range(0, n):
-        j = i
-        is_bigger = True
-        cnt = 0
-        while j > 0 and is_bigger:
-            j = j - 1
-            is_bigger = df.iloc[j]['Volume'] < df.iloc[i]['Volume']
-            if is_bigger:
-                cnt = cnt + 1
 
-        num.append(cnt)
+    j = n-1
+    is_bigger = True
+    cnt = 0
+    while j > 0 and is_bigger:
+        j = j - 1
+        is_bigger = df.iloc[j]['Volume'] < df.iloc[n-1]['Volume']
+        if is_bigger:
+            cnt = cnt + 1
 
-    df.insert(2, "vol_high_count", num)
+    return cnt
 
-    return df
+
+def average_last_period(df, period_length):
+    avg = None
+
+    if len(df) > 0 and period_length > 0:
+        first_idx = df.index[0]
+        last_idx = df.index[-1]
+
+        start_idx = last_idx - period_length + 1
+        if start_idx < first_idx:
+            start_idx = first_idx
+
+        s = 0
+        for i in range(start_idx, last_idx + 1):
+            s = s + df.iloc[i]['Close']
+        avg = s / period_length
+
+    return avg
+

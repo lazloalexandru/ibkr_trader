@@ -5,9 +5,15 @@ from ibapi.wrapper import EWrapper, BarData
 
 
 class IBApi(EWrapper, EClient):
-    def __init__(self):
+    def __init__(self, sw):
         EClient.__init__(self, self)
-        bar_data = []
+        self.data = []
+        self.sw = sw
+
+    def init_time(self):
+        time_queue = queue.Queue()
+        self.my_time_queue = time_queue
+        return time_queue
 
     def init_error(self):
         error_queue = queue.Queue()
@@ -30,14 +36,19 @@ class IBApi(EWrapper, EClient):
         self.req_queue = req_queue
         return req_queue
 
+    def currentTime(self, server_time):
+        self.my_time_queue.put(server_time)
+
     def nextValidId(self, orderId: int):
         super().nextValidId(orderId)
         self.nextorderId = orderId
 
     def error(self, id, errorCode, errorString):
         if errorCode != 2104 and errorCode != 2106 and errorCode != 2158:
-            errormessage = "IB returns an error with %d errorcode %d that says %s" % (id, errorCode, errorString)
-            print(colored(errormessage, color='red'))
+            errormessage = "%d code %d -> %s" % (id, errorCode, errorString)
+            # self.sw.addstr(0, 0, errormessage)
+            # self.sw.refresh()
+
             self.my_errors_queue.put(errormessage)
 
     def historicalData(self, reqId, bar):
@@ -46,6 +57,10 @@ class IBApi(EWrapper, EClient):
         # print(f'Time: {bar.date} Open: {bar.open} Close: {bar.close}')
         # if bar.date == "20190329":
         #    print(bar)
+
+        msg = str(bar.date)
+        # self.sw.addstr(0, 40, msg)
+        # self.sw.refresh()
 
         self.data.append([bar.date, bar.open, bar.close,  bar.high, bar.low, bar.volume * 100])
 
@@ -57,4 +72,8 @@ class IBApi(EWrapper, EClient):
         self.req_queue.put(reqId)
 
     def historicalDataEnd(self, reqId:int, start:str, end:str):
+        msg = str(reqId)
+        # self.sw.addstr(0, 70, msg)
+        # self.sw.refresh()
+
         self.req_queue.put(reqId)

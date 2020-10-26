@@ -1,0 +1,2 @@
+python trader.py
+Pause
