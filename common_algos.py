@@ -139,7 +139,7 @@ def calc_num_volumes_lower_last(df):
     return cnt
 
 
-def average_last_period(df, period_length):
+def average_last_period(df, period_length, column='Close'):
     avg = None
 
     if len(df) > 0 and period_length > 0:
@@ -152,7 +152,7 @@ def average_last_period(df, period_length):
 
         s = 0
         for i in range(start_idx, last_idx + 1):
-            s = s + df.iloc[i]['Close']
+            s = s + df.iloc[i][column]
         avg = s / period_length
 
     return avg

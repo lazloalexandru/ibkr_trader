@@ -1,15 +1,15 @@
 ms_params = {
-        '__chart_begin_hh': 16,
+        '__chart_begin_hh': 9,
         '__chart_begin_mm': 30,
-        '__chart_end_hh': 19,
+        '__chart_end_hh': 12,
         '__chart_end_mm': 0,
 
         '__min_close_price': 1.5,
         '__max_close_price': 20,
 
-        'trading_begin_hh': 16,
+        'trading_begin_hh': 9,
         'trading_begin_mm': 35,
-        'last_entry_hh': 17,
+        'last_entry_hh': 10,
         'last_entry_mm': 15,
 
         'stop': -5,
@@ -35,6 +35,7 @@ ms_params = {
         'min_volume': 0,
         'min_volume_x_price': 10000000,
         'min_volume_jump_factor': 1.5,
+        'min_volume_jump_factor_above_average': 1.5,
         'min_avg_volume': 0,
 
         'recent_duration': 5,
