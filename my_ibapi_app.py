@@ -5,10 +5,9 @@ from ibapi.wrapper import EWrapper, BarData
 
 
 class IBApi(EWrapper, EClient):
-    def __init__(self, sw):
+    def __init__(self):
         EClient.__init__(self, self)
         self.data = []
-        self.sw = sw
 
     def init_time(self):
         time_queue = queue.Queue()

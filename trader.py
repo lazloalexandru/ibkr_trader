@@ -1,6 +1,5 @@
 import datetime
 import queue
-from termcolor import colored
 import threading
 import time
 import pandas as pd
@@ -8,7 +7,6 @@ import common_algos as ca
 import common_utils as cu
 import curses
 from my_ibapi_app import IBApi
-from params import ms_params
 from watchlist import quotes
 
 
@@ -16,8 +14,8 @@ def _run_loop(app):
     app.run()
 
 
-def _init_ibkr(sw, id):
-    app = IBApi(sw)
+def _init_ibkr(id):
+    app = IBApi()
 
     app.init_error()
 
@@ -79,55 +77,6 @@ def _calc_bagholder_score_from_ibkr_chart(app, req_store, symbol, sw):
     return bs
 
 
-def print_quote_info(sym_params):
-    qw = curses.newwin(2, curses.COLS, 0, 0)
-
-    qw.clear()
-    qw.addstr(0, 0, 'Quote', curses.color_pair(1))
-    qw.addstr(1, 0, sym_params['symbol'], curses.color_pair(3))
-
-    initial_market_cap = round(sym_params['shares_outstanding'] * sym_params['base_price'])
-    qw.addstr(0, 8, 'MCap', curses.color_pair(1))
-    cg = 4 if initial_market_cap < 10 else 5
-    qw.addstr(1, 8, '%sM' % initial_market_cap, curses.color_pair(cg))
-
-    qw.addstr(0, 15, 'Shares/Float', curses.color_pair(1))
-    cg = 4 if sym_params['float'] < 3 else 5
-    qw.addstr(1, 15, '%sM / %sM' % (sym_params['shares_outstanding'], sym_params['float']), curses.color_pair(cg))
-
-    qw.addstr(0, 30, 'News', curses.color_pair(1))
-    news = "-" if sym_params['news'] is None else sym_params['news']
-    qw.addstr(1, 30, '%s' % news, curses.color_pair(3))
-
-    qw.refresh()
-
-
-def select_quote(scr):
-    idx = None
-    n = len(quotes)
-
-    scr.clear()
-    scr.refresh()
-
-    if n > 0:
-        scr.addstr(4, 5, "Select Quote")
-        scr.addstr(5, 5, "(press a key between  1 .. " + str(n) + ")")
-
-        for i in range(0, n):
-            scr.addstr(7 + i, 5, str(i+1) + " -> " + quotes[i]['symbol'])
-
-        key_pressed = None
-        while idx not in range(0, n):
-            key_pressed = scr.getch()
-            idx = key_pressed - ord('1')
-            scr.refresh()
-
-    scr.clear()
-    scr.refresh()
-
-    return idx
-
-
 def _server_clock(app, time_storage):
     app.reqCurrentTime()
 
@@ -140,319 +89,156 @@ def _server_clock(app, time_storage):
 
 
 def _add_indicators(df):
-    df_range = pd.DataFrame(columns=['idx', 'range'])
-
-    # tr = []
-    vwap = []
-    cur_vol = []
-
-    sum_vxp = 0
-    sumv = 0
-
-    n = len(df)
-    for i in range(0, n):
-
-        ####################################################################
-        # Range Score
-
-        data = {'idx': i,
-                'range': df.iloc[i]['High'] - df.iloc[i]['Low']}
-        df_range = df_range.append(data, ignore_index=True)
-
-        ####################################################################
-        # VWAP & Current volume
-
-        sum_vxp = sum_vxp + df.loc[i]['Volume'] * (df.loc[i]['High'] + df.loc[i]['Close'] + df.loc[i]['Low'])/3
-        sumv = sumv + df.loc[i]['Volume']
-
-        vwap.append(0 if sumv == 0 else sum_vxp / sumv)
-        cur_vol.append(sumv)
-
-        ####################################################################
-        # TR
-
-        # tr.append(df.loc[j]['High'] - df.loc[j]['Low'])
-
-    ##################################################################
-    # Range Score Continued ...
-
-    df_range = df_range.set_index(df_range.idx)
-    df_range = df_range.sort_values(by='range', ascending=True)
-
-    range_score = [0] * n
-    for i in range(0, n):
-        range_score[int(df_range.iloc[i]['idx'])] = int(100 * i / n)
-
-    df["range_score"] = range_score
-    df["vwap"] = vwap
-    df["current_volume"] = cur_vol
-    # df["trading_range"] = tr
-
-    # df["atr3"] = df["trading_range"].rolling(window=3).mean()
-    # df["atr5"] = df["trading_range"].rolling(window=5).mean()
-    # df["atr8"] = df["trading_range"].rolling(window=8).mean()
-    # df["atr13"] = df["trading_range"].rolling(window=13).mean()
-
-    # df['mav3'] = df['Close'].rolling(window=3).mean()
-    # df['mav5'] = df['Close'].rolling(window=5).mean()
-    # df['mav8'] = df['Close'].rolling(window=8).mean()
-    # df['mav9'] = df['Close'].rolling(window=9).mean()
-    # df['mav13'] = df['Close'].rolling(window=13).mean()
-    # df['mav21'] = df['Close'].rolling(window=21).mean()
-
-    # df['vmav3'] = df['Volume'].rolling(window=3).mean()
-    # df['vmav5'] = df['Volume'].rolling(window=5).mean()
-    # df['vmav8'] = df['Volume'].rolling(window=8).mean()
-    # df['vmav13'] = df['Volume'].rolling(window=13).mean()
-    # df['vmav21'] = df['Volume'].rolling(window=21).mean()
+    df['mav3'] = df['Close'].rolling(window=3).mean()
+    df['mav5'] = df['Close'].rolling(window=5).mean()
+    df['mav8'] = df['Close'].rolling(window=8).mean()
+    df['mav13'] = df['Close'].rolling(window=13).mean()
 
     return df
 
 
-def _ms_pattern(df, bs):
-    pw = curses.newwin(20, curses.COLS, 4, 0)
+def get_index_of_min(df, start_idx, end_idx):
+    mn = df['Low'][start_idx]
+    idx = start_idx
 
-    _add_indicators(df)
-    vmavl = ca.average_last_period(df, ms_params['vmavl'], 'Volume')
-    recent_low = ca.get_last_period_low(df, ms_params['recent_duration'])
-    recent_high = ca.get_last_period_high(df, ms_params['recent_duration'])
-    xxx_high = ca.get_last_period_high(df, ms_params['extended_duration'])
-    xxx_low = ca.get_last_period_low(df, ms_params['extended_duration'])
-    pw.clear()
+    for i in range(start_idx+1, end_idx+1):
+        if df['Low'][i] < mn:
+            mn = df['Low'][i]
+            idx = i
 
-    sd = 10
-    r = 0
+    return idx, mn  # str(df.loc[idx]['Time'].time())
 
-    ########################################################################
 
-    pw.addstr(r, 0, 'MS  =>', curses.color_pair(1))
-    pw.addstr(r, 10, 'BUY', curses.color_pair(6))
-    pw.addstr(r, 20, 'SELL', curses.color_pair(6))
-    r += 2
+def get_index_of_max(df, start_idx, end_idx):
+    mx = df['High'][start_idx]
+    idx = start_idx
 
-    ########################################################################
+    for i in range(start_idx+1, end_idx+1):
+        if df['High'][i] > mx:
+            mx = df['High'][i]
+            idx = i
 
-    close = df.iloc[-1]['Close']
-    cg = 5 if close > ms_params['__min_close_price'] else 4
-    pw.addstr(r, 0, 'Price', curses.color_pair(1))
-    pw.addstr(r, sd, '%.2f$' % close, curses.color_pair(cg))
-    r += 1
+    return idx, mx  # str(df.loc[idx]['Time'].time()), mx
 
-    ########################################################################
 
-    mavm = ca.average_last_period(df, ms_params['mavm'])
-    cg = 5 if close > mavm else 4
+def get_pivots(df):
+    mm = "mav8"
+    ml = "mav13"
 
-    pw.addstr(r, 0, 'SMA' + str(ms_params['mavm']), curses.color_pair(1))
-    pw.addstr(r, sd, '%.2f' % mavm, curses.color_pair(cg))
-    r += 1
+    pivots = []
+    start_idx = df.index[20]
+    idx_prev = start_idx
 
-    ########################################################################
+    state_open = False
+    if df[mm][start_idx] > df[ml][start_idx]:
+        state_open = True
+
+    n = len(df)
+
+    for i in range(start_idx, n):
+        prev_state = state_open
 
-    vol = df.iloc[-1]['Volume']
-    cg = 5 if vol > ms_params['min_sig_volume'] else 4
+        if df[mm][i] > df[ml][i]:
+            state_open = True
+        elif df[mm][i] < df[ml][i]:
+            state_open = False
 
-    pw.addstr(r, 0, '1MinVol', curses.color_pair(1))
-    pw.addstr(r, sd, '%sk' % round(vol/1000), curses.color_pair(cg))
-    pw.addstr(r, sd + 6, ' ( %.0fk' % (vmavl / 1000) + ' <- vmav' + str(ms_params['vmavl']) + ' )', curses.color_pair(1))
-    r += 1
+        if prev_state == True and state_open == False:
+            max_idx, val = get_index_of_max(df, idx_prev, i)
+            pivots.append([val, True, df['Time'][max_idx]])
+            idx_prev = i
+        elif prev_state == False and state_open == True:
+            min_idx, val = get_index_of_min(df, idx_prev, i)
+            pivots.append([val, False, df['Time'][min_idx]])
+            idx_prev = i
 
-    ########################################################################
+    return pivots
 
-    vjf = df.iloc[-1]['Volume']/df.iloc[-2]['Volume']
-    cg = 5 if vjf > ms_params['min_volume_jump_factor'] else 4
 
-    pw.addstr(r, 0, 'VJF', curses.color_pair(1))
-    pw.addstr(r, sd, '%.2f' % vjf, curses.color_pair(cg))
-    r += 1
+def show_time(app, time_queue):
+    unix_time = _server_clock(app, time_queue)
+    if unix_time is not None:
+        current_time = datetime.datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+        print(current_time, end="")
 
-    ########################################################################
 
-    vajf = df.iloc[-1]['Volume'] / vmavl
-    cg = 5 if vajf > ms_params['min_volume_jump_factor_above_average'] else 4
+class Trader:
+    def __init__(self, sym_id):
+        self.sym_id = sym_id
+        self.app = _init_ibkr(sym_id)
+        self.time_queue = self.app.init_time()
+        self.req_store = self.app.init_req_queue()
+        self.in_a_trade = False
 
-    pw.addstr(r, 0, 'VAJF', curses.color_pair(1))
-    pw.addstr(r, sd, '%.2f' % vajf, curses.color_pair(cg))
-    r += 1
+    def get_chart_data(self):
+        xxx = None
+        while not self.app.wrapper.is_error() and xxx is None:
+            try:
+                xxx = self.req_store.get(timeout=1)
+            except queue.Empty:
+                xxx = None
 
-    ########################################################################
+        if len(self.app.data) == 0:
+            print("No Data ...")
+        else:
+            df = pd.DataFrame(self.app.data, columns=["Time", "Open", "Close", "High", "Low", "Volume"])
+            _add_indicators(df)
 
-    cnt = ca.calc_num_volumes_lower_last(df)
-    cg = 5 if cnt >= ms_params['vol_pattern_length'] else 4
+        return df
 
-    pw.addstr(r, 0, 'VScore', curses.color_pair(1))
-    pw.addstr(r, sd, '%s' % cnt, curses.color_pair(cg))
-    r += 1
+    def trade_loop(self):
+        symbol = quotes[self.sym_id]['symbol']
+        self.app.data = []
+        self.app.reqHistoricalData(2001, cu.contract(symbol), "", '1 D', '1 min', 'TRADES', 0, 1, True, [])
 
-    ########################################################################
+        can_enter = False
+        valid_pattern = False
 
-    ratio = (recent_low / xxx_high)
-    cg = 5 if ratio > ms_params['extended_crash_min_factor'] else 4
+        while True:
+            print("\n")
 
-    pw.addstr(r, 0, 'XCrash', curses.color_pair(1))
-    pw.addstr(r, sd, '%.2f' % ratio, curses.color_pair(cg))
-    pw.addstr(r, sd + 6, '<- %.2f / %.2f (rl/xh)' % (recent_low, xxx_high), curses.color_pair(1))
-    r += 1
+            can_enter_prev = can_enter
+            # show_time(app, time_queue)
 
-    ########################################################################
+            df = self.get_chart_data()
 
-    current_high = df.iloc[-1]['High']
-    ratio = (current_high / xxx_low)
-    cg = 5 if ratio < ms_params['extended_run_max_factor'] else 4
+            pivots = get_pivots(df)
+            if len(pivots) >= 2:
+                pivots = pivots[-2:]
 
-    pw.addstr(r, 0, 'XRun', curses.color_pair(1))
-    pw.addstr(r, sd, '%.2f' % ratio, curses.color_pair(cg))
-    pw.addstr(r, sd + 6, '<- %.2f / %.2f (xl/ch)' % (xxx_low, current_high), curses.color_pair(1))
-    r += 1
+                print(pivots)
 
-    ########################################################################
+                if pivots[-1][1]:  # last pivot was a high
+                    print("DOWNTREND")
+                    valid_pattern = False
+                    can_enter = False
+                else:  # last pivot was a low
+                    print("UPTREND  BUY@", pivots[-2][0], end="")
+                    valid_pattern = True
 
-    ratio = (current_high / recent_low)
-    cg = 5 if ratio < ms_params['recent_run_max_factor'] else 4
+            if not self.in_a_trade:
+                if valid_pattern:
+                    print("  Can Enter:", can_enter)
 
-    pw.addstr(r, 0, 'Run', curses.color_pair(1))
-    pw.addstr(r, sd, '%.2f' % ratio, curses.color_pair(cg))
-    pw.addstr(r, sd + 6, '<- %.2f / %.2f (cl/rl)' % (current_high, recent_low), curses.color_pair(1))
-    r += 1
+                    if df.iloc[-1]["Close"] < pivots[-2][0]:
+                        can_enter = True
+                    else:
+                        can_enter = False
 
-    ########################################################################
+                    if can_enter_prev and not can_enter:
+                        print("BUY@", pivots[-2][0])
+                        self.in_a_trade = True
+            else:
+                if df.iloc[-1]["mav3"] < df.iloc[-1]["mav5"]:
+                    print("SELL")
+                    self.in_a_trade = False
 
-    ratio = recent_low / recent_high
-    cg = 5 if ratio > ms_params['recent_crash_min_factor'] else 4
+            print(df.iloc[-1]["Close"])
 
-    pw.addstr(r, 0, 'Crash', curses.color_pair(1))
-    pw.addstr(r, sd, '%.2f' % ratio, curses.color_pair(cg))
-    pw.addstr(r, sd + 6, '<- %.2f / %.2f (rl/rh)' % (recent_low, recent_high), curses.color_pair(1))
-    r += 1
 
-    ########################################################################
+def main():
+    t = Trader(0)
+    t.trade_loop()
 
-    ratio = recent_low / df.iloc[-1]['vwap']
-    cg = 5 if ratio > ms_params['recent_low_vwap_min_factor'] else 4
 
-    pw.addstr(r, 0, 'VWDown', curses.color_pair(1))
-    pw.addstr(r, sd, '%.2f' % ratio, curses.color_pair(cg))
-    pw.addstr(r, sd + 6, '<- %.2f / %.2f (rl/vwap)' % (recent_low, df.iloc[-1]['vwap']), curses.color_pair(1))
-    r += 1
-
-    ########################################################################
-
-    pxv = close * df.iloc[-1]['current_volume']
-    cg = 5 if pxv > ms_params['min_volume_x_price'] else 4
-    pw.addstr(r, 0, 'PxV', curses.color_pair(1))
-    pw.addstr(r, sd, '%.2fM' % (pxv / 1000000), curses.color_pair(cg))
-    r += 1
-
-    ########################################################################
-
-    pw.addstr(r, 0, 'BScore', curses.color_pair(1))
-    if bs is None:
-        pw.addstr(r, sd, 'error', curses.color_pair(2))
-    else:
-        pw.addstr(r, sd, '%s' % bs, curses.color_pair(5))
-    r += 1
-
-    ########################################################################
-
-    pw.refresh()
-
-
-def _asses_1min_chart(app, req_store, bs):
-    sw = curses.newwin(1, curses.COLS, curses.LINES - 2, 0)
-
-    '''
-    tr_begin_time = datetime.datetime.now()
-    tr_begin_time = tr_begin_time.replace(hour=params['trading_begin_hh'], minute=params['trading_begin_mm'], second=0)
-    last_entry_time = datetime.datetime.now()
-    last_entry_time = last_entry_time.replace(hour=params['last_entry_hh'], minute=params['last_entry_mm'], second=0)
-    forced_sell_time = datetime.datetime.now()
-    forced_sell_time = forced_sell_time.replace(hour=params['chart_end_hh'], minute=params['chart_end_hh'], second=0)
-    '''
-
-    xxx = None
-    while not app.wrapper.is_error() and xxx is None:
-        try:
-            xxx = req_store.get(timeout=1)
-        except queue.Empty:
-            xxx = None
-
-    if len(app.data) == 0:
-        sw.addstr(0, 0, "No data", curses.color_pair(2))
-        sw.refresh()
-    else:
-
-        df = pd.DataFrame(app.data, columns=["Time", "Open", "Close", "High", "Low", "Volume"])
-
-        _t = pd.to_datetime(df.iloc[-1]["Time"], format="%Y%m%d  %H:%M:%S")
-
-        _ms_pattern(df, bs)
-
-
-def main(scr):
-    curses.curs_set(0)
-    curses.cbreak()
-    curses.resize_term(30, 45)
-
-    scr.nodelay(1)
-    scr.timeout(1)
-
-    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLACK)
-    curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
-    curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-    curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_RED)
-    curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_GREEN)
-    curses.init_pair(6, curses.COLOR_BLACK, curses.COLOR_WHITE)
-
-    sw1 = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
-    sw2 = curses.newwin(1, curses.COLS, curses.LINES - 2, 0)
-    sw3 = curses.newwin(1, curses.COLS, curses.LINES - 3, 0)
-
-    if len(quotes) == 0:
-        sw1.addstr(0, 0, "No quotes in watchlist. See \'watchilist.py\' file.", curses.color_pair(3))
-        sw1.refresh()
-    else:
-        selected_id = select_quote(scr)
-
-        sw1.addstr(0, 0, "Connecting to TWS ...", curses.color_pair(1))
-        sw1.refresh()
-
-        app = _init_ibkr(sw3, selected_id)
-        time_queue = app.init_time()
-        symbol = quotes[selected_id]['symbol']
-        req_store = app.init_req_queue()
-
-        sw1.clear()
-        sw1.addstr(0, 0, "Connected!", curses.color_pair(1))
-        sw1.refresh()
-
-        bs = _calc_bagholder_score_from_ibkr_chart(app, req_store, symbol, sw2)
-
-        app.data = []
-
-        app.reqHistoricalData(2001, cu.contract(symbol), "", '1 D', '1 min', 'TRADES', 0, 1, True, [])
-
-        sw2.clear()
-        sw2.refresh()
-
-        key_pressed = None
-        while key_pressed != 17:
-            sw1 = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
-
-            unix_time = _server_clock(app, time_queue)
-            current_time = datetime.datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
-            sw1.addstr(0, 0, current_time, curses.color_pair(1))
-            sw1.addstr(0, 30, "Quit [Ctrl+Q]", curses.color_pair(1))
-            sw1.refresh()
-
-            print_quote_info(quotes[selected_id])
-
-            _asses_1min_chart(app, req_store, bs)
-
-            key_pressed = scr.getch()
-
-
-curses.wrapper(main)
-
-
-
-
+main()
