@@ -1,5 +1,6 @@
 import queue
 from termcolor import colored
+from ibapi.wrapper import OrderId
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper, BarData
 
@@ -37,6 +38,7 @@ class IBApi(EWrapper, EClient):
 
     def currentTime(self, server_time):
         self.my_time_queue.put(server_time)
+
 
     def nextValidId(self, orderId: int):
         super().nextValidId(orderId)
@@ -76,3 +78,18 @@ class IBApi(EWrapper, EClient):
         # self.sw.refresh()
 
         self.req_queue.put(reqId)
+
+    def orderStatus(self, orderId: OrderId, status: str, filled: float, remaining: float, avgFillPrice: float, permId: int, parentId: int,
+                    lastFillPrice: float, clientId: int, whyHeld: str, mktCapPrice: float):
+
+        super().orderStatus(orderId, status, filled, remaining, avgFillPrice, permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice)
+
+        print("OrderStatus. Id:", orderId, "Status:", status, "Filled:", filled,
+        "Remaining:", remaining, "AvgFillPrice:", avgFillPrice,
+        "PermId:", permId, "ParentId:", parentId, "LastFillPrice:",
+        lastFillPrice, "ClientId:", clientId, "WhyHeld:",
+        whyHeld, "MktCapPrice:", mktCapPrice)
+
+    def openOrderEnd(self):
+        super().openOrderEnd()
+        print("OpenOrderEnd")

@@ -1,4 +1,5 @@
 import datetime
+import readchar
 import queue
 import threading
 import time
@@ -8,7 +9,10 @@ import common_utils as cu
 import curses
 from my_ibapi_app import IBApi
 from watchlist import quotes
+import os
 
+
+__log_path = "logs"
 
 def _run_loop(app):
     app.run()
@@ -122,8 +126,8 @@ def get_index_of_max(df, start_idx, end_idx):
 
 
 def get_pivots(df):
-    mm = "mav8"
-    ml = "mav13"
+    mm = "mav5"
+    ml = "mav8"
 
     pivots = []
     start_idx = df.index[20]
@@ -145,21 +149,50 @@ def get_pivots(df):
 
         if prev_state == True and state_open == False:
             max_idx, val = get_index_of_max(df, idx_prev, i)
-            pivots.append([val, True, df['Time'][max_idx]])
+            pivots.append([val, True, df['Time'][max_idx], max_idx])
             idx_prev = i
         elif prev_state == False and state_open == True:
             min_idx, val = get_index_of_min(df, idx_prev, i)
-            pivots.append([val, False, df['Time'][min_idx]])
+            pivots.append([val, False, df['Time'][min_idx], min_idx])
             idx_prev = i
 
     return pivots
 
 
-def show_time(app, time_queue):
-    unix_time = _server_clock(app, time_queue)
-    if unix_time is not None:
-        current_time = datetime.datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
-        print(current_time, end="")
+def save_trade_log(symbol, action, time_, price, size):
+    path = __log_path + "\\" + "trades.txt"
+
+    if os.path.isfile(path):
+        df = pd.read_csv(path)
+    else:
+        df = pd.DataFrame(columns=['sym', 'time', 'action', 'price', 'size'])
+
+    data = {
+        'sym': symbol,
+        'time': time_,
+        'action': action,
+        'price': price,
+        'size': size
+    }
+
+    df = df.append(data, ignore_index=True)
+    print(df)
+
+    df.to_csv(path, index=False)
+
+
+def pattern_intact(df, pivots):
+    if pivots[-1][1]:
+        res = True
+    else:
+        start_idx = pivots[-1][3]
+        end_idx = df.index[-1]
+
+        res = True
+        for i in range(start_idx, end_idx):
+            res = res and df.iloc[-1]["High"] < pivots[-2][0]
+
+    return res
 
 
 class Trader:
@@ -169,9 +202,20 @@ class Trader:
         self.time_queue = self.app.init_time()
         self.req_store = self.app.init_req_queue()
         self.in_a_trade = False
+        self.braket = None
+
+    def server_time(self):
+        xxx = None
+        unix_time = _server_clock(self.app, self.time_queue)
+        if unix_time is not None:
+            current_time = datetime.datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+            xxx = current_time
+        return xxx
 
     def get_chart_data(self):
         xxx = None
+        df = None
+
         while not self.app.wrapper.is_error() and xxx is None:
             try:
                 xxx = self.req_store.get(timeout=1)
@@ -180,6 +224,9 @@ class Trader:
 
         if len(self.app.data) == 0:
             print("No Data ...")
+            while self.app.wrapper.is_error():
+                msg = self.app.get_error(timeout=5)
+                print(msg)
         else:
             df = pd.DataFrame(self.app.data, columns=["Time", "Open", "Close", "High", "Low", "Volume"])
             _add_indicators(df)
@@ -189,55 +236,88 @@ class Trader:
     def trade_loop(self):
         symbol = quotes[self.sym_id]['symbol']
         self.app.data = []
-        self.app.reqHistoricalData(2001, cu.contract(symbol), "", '1 D', '1 min', 'TRADES', 0, 1, True, [])
+        contract = cu.contract(symbol)
+        self.app.reqHistoricalData(2001, contract, "", '1 D', '1 min', 'TRADES', 0, 1, True, [])
 
         can_enter = False
         valid_pattern = False
+        last_pivot_idx = 0
+        trend = ""
 
         while True:
-            print("\n")
-
-            can_enter_prev = can_enter
-            # show_time(app, time_queue)
+            print("\n", symbol)
 
             df = self.get_chart_data()
 
-            pivots = get_pivots(df)
-            if len(pivots) >= 2:
-                pivots = pivots[-2:]
+            if df is not None:
+                pivots = get_pivots(df)
+                num_pivots = len(pivots)
 
-                print(pivots)
+                if num_pivots >= 2:
+                    print(pivots[-2:])
 
-                if pivots[-1][1]:  # last pivot was a high
-                    print("DOWNTREND")
-                    valid_pattern = False
-                    can_enter = False
-                else:  # last pivot was a low
-                    print("UPTREND  BUY@", pivots[-2][0], end="")
-                    valid_pattern = True
-
-            if not self.in_a_trade:
-                if valid_pattern:
-                    print("  Can Enter:", can_enter)
-
-                    if df.iloc[-1]["Close"] < pivots[-2][0]:
-                        can_enter = True
-                    else:
+                    if pivots[-1][1]:  # last pivot was a high
+                        trend = "DOWNTREND"
+                        valid_pattern = False
                         can_enter = False
+                    else:  # last pivot was a low
+                        trend = "UPTREND"
+                        # if pattern_intact(df, pivots):
+                        valid_pattern = True
+                        trend = trend + "BUY @ " + str(pivots[-2][0])
 
-                    if can_enter_prev and not can_enter:
-                        print("BUY@", pivots[-2][0])
-                        self.in_a_trade = True
-            else:
-                if df.iloc[-1]["mav3"] < df.iloc[-1]["mav5"]:
-                    print("SELL")
-                    self.in_a_trade = False
+                if not self.in_a_trade:
+                    if valid_pattern:
+                        if df.iloc[-1]["Close"] >= pivots[-2][0]:
+                            if last_pivot_idx != num_pivots:
+                                last_pivot_idx = num_pivots
+                                print(" BUY@", pivots[-2][0])
+                                save_trade_log(symbol, "BUY", df.iloc[-1]["Time"], pivots[-2][0], 100)
 
-            print(df.iloc[-1]["Close"])
+                                order_id_x = self.app.nextorderId
+                                print(order_id_x)
+                                self.braket = cu.BracketOrder(order_id_x, "BUY", 100, 153, 155, 149)
+                                self.app.placeOrder(self.braket[0].orderId, contract, self.braket[0])
+                                self.app.placeOrder(self.braket[1].orderId, contract, self.braket[1])
+                                self.app.placeOrder(self.braket[2].orderId, contract, self.braket[2])
+
+                                self.in_a_trade = True
+                else:
+                    print("In a Trade!")
+                    if df.iloc[-1]["mav3"] < df.iloc[-1]["mav5"]:
+                        print("SELL")
+                        self.braket[2].auxPrice = 17.5
+                        self.app.placeOrder(self.braket[2].orderId, contract, self.braket[2])
+
+                        save_trade_log(symbol, "SELL", df.iloc[-1]["Time"], df.iloc[-1]["Close"], 100)
+                        self.in_a_trade = False
+
+                print(trend, "   ", last_pivot_idx, num_pivots, "  ", df.iloc[-1]["Close"])
+
+
+def select_stock():
+    i = 0
+    num_quotes = len(quotes)
+    if num_quotes > 0:
+        print("Press key between ", 1, "..", num_quotes)
+
+        for q in quotes:
+            i += 1
+            print("     %s)" % i, q['symbol'])
+
+        selected_id = int(readchar.readchar())
+        while not 1 <= selected_id <= num_quotes:
+            selected_id = int(readchar.readchar())
+
+        print("SelectedId:", selected_id)
+
+        return selected_id
 
 
 def main():
-    t = Trader(0)
+
+    selected_id = 4  # select_stock()
+    t = Trader(selected_id-1)
     t.trade_loop()
 
 
