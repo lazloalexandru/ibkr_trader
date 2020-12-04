@@ -1,4 +1,6 @@
 import queue
+
+from ibapi.common import ListOfPriceIncrements
 from termcolor import colored
 from ibapi.wrapper import OrderId
 from ibapi.client import EClient
@@ -93,3 +95,13 @@ class IBApi(EWrapper, EClient):
     def openOrderEnd(self):
         super().openOrderEnd()
         print("OpenOrderEnd")
+
+    def execDetails(self, reqId, contract, execution):
+        print('Order Executed: ', reqId, contract.symbol, contract.secType, contract.currency, execution.execId, execution.orderId, execution.shares,
+              execution.lastLiquidity)
+
+    def marketRule(self, marketRuleId: int, priceIncrements: ListOfPriceIncrements):
+        super().marketRule(marketRuleId, priceIncrements)
+        print("Market Rule ID: ", marketRuleId)
+        for priceIncrement in priceIncrements:
+            print("Price Increment.", priceIncrement)

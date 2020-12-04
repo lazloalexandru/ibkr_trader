@@ -14,6 +14,7 @@ import os
 
 __log_path = "logs"
 
+
 def _run_loop(app):
     app.run()
 
@@ -39,6 +40,19 @@ def _init_ibkr(id):
             time.sleep(1)
 
     return app
+
+
+def get_next_order_id(app):
+    app.nextorderId = -1
+    app.reqIds(-1)
+
+    while app.nextorderId < 0:
+        print('Waiting for order ID')
+        time.sleep(0.05)
+
+    print("Next Order ID:", app.nextorderId)
+
+    return app.nextorderId
 
 
 def _calc_bagholder_score_from_ibkr_chart(app, req_store, symbol, sw):
@@ -159,7 +173,7 @@ def get_pivots(df):
     return pivots
 
 
-def save_trade_log(symbol, action, time_, price, size):
+def save_trade_log(order_id, symbol, action, time_, price, size):
     path = __log_path + "\\" + "trades.txt"
 
     if os.path.isfile(path):
@@ -172,7 +186,8 @@ def save_trade_log(symbol, action, time_, price, size):
         'time': time_,
         'action': action,
         'price': price,
-        'size': size
+        'size': size,
+        'orderid': order_id
     }
 
     df = df.append(data, ignore_index=True)
@@ -203,6 +218,7 @@ class Trader:
         self.req_store = self.app.init_req_queue()
         self.in_a_trade = False
         self.braket = None
+        self.limit = None
 
     def server_time(self):
         xxx = None
@@ -266,33 +282,54 @@ class Trader:
                         valid_pattern = True
                         trend = trend + "BUY @ " + str(pivots[-2][0])
 
+                close = df.iloc[-1]["Close"]
+
                 if not self.in_a_trade:
                     if valid_pattern:
                         if df.iloc[-1]["Close"] >= pivots[-2][0]:
                             if last_pivot_idx != num_pivots:
-                                last_pivot_idx = num_pivots
-                                print(" BUY@", pivots[-2][0])
-                                save_trade_log(symbol, "BUY", df.iloc[-1]["Time"], pivots[-2][0], 100)
+                                if df.iloc[-1]["mav3"] > df.iloc[-1]["mav5"]:
+                                    order_id = get_next_order_id(self.app)
 
-                                order_id_x = self.app.nextorderId
-                                print(order_id_x)
-                                self.braket = cu.BracketOrder(order_id_x, "BUY", 100, 153, 155, 149)
-                                self.app.placeOrder(self.braket[0].orderId, contract, self.braket[0])
-                                self.app.placeOrder(self.braket[1].orderId, contract, self.braket[1])
-                                self.app.placeOrder(self.braket[2].orderId, contract, self.braket[2])
+                                    last_pivot_idx = num_pivots
+                                    print(" BUY@", pivots[-2][0])
 
-                                self.in_a_trade = True
+                                    save_trade_log(order_id, symbol, "BUY", df.iloc[-1]["Time"], pivots[-2][0], 100)
+
+                                    buyPrice = cu.to_tick_price(close * 1.01)
+                                    profitTakePrice = cu.to_tick_price(buyPrice * 1.2)
+                                    stopPrice = cu.to_tick_price(buyPrice * 0.95)
+
+                                    print("Buy:", buyPrice, "Profit:", profitTakePrice, "STOP:", stopPrice)
+
+                                    self.braket = cu.BracketOrder(parentOrderId=order_id,
+                                                                  quantity=100,
+                                                                  limitPrice=buyPrice,
+                                                                  takeProfitLimitPrice=profitTakePrice,
+                                                                  stopLossPrice=stopPrice)
+
+                                    print("Orders:", self.braket[0].orderId, self.braket[1].orderId, self.braket[1].orderId)
+
+                                    self.app.placeOrder(self.braket[0].orderId, contract, self.braket[0])
+                                    self.app.placeOrder(self.braket[1].orderId, contract, self.braket[1])
+                                    self.app.placeOrder(self.braket[2].orderId, contract, self.braket[2])
+
+                                    self.in_a_trade = True
                 else:
                     print("In a Trade!")
+
                     if df.iloc[-1]["mav3"] < df.iloc[-1]["mav5"]:
                         print("SELL")
-                        self.braket[2].auxPrice = 17.5
+                        sellPrice = cu.to_tick_price(close * 1.2)
+                        self.braket[2].auxPrice = sellPrice
                         self.app.placeOrder(self.braket[2].orderId, contract, self.braket[2])
 
-                        save_trade_log(symbol, "SELL", df.iloc[-1]["Time"], df.iloc[-1]["Close"], 100)
+                        save_trade_log(self.braket[2].orderId, symbol, "SELL", df.iloc[-1]["Time"], df.iloc[-1]["Close"], 100)
                         self.in_a_trade = False
 
                 print(trend, "   ", last_pivot_idx, num_pivots, "  ", df.iloc[-1]["Close"])
+
+            time.sleep(0.5)
 
 
 def select_stock():
@@ -316,7 +353,7 @@ def select_stock():
 
 def main():
 
-    selected_id = 4  # select_stock()
+    selected_id = select_stock()
     t = Trader(selected_id-1)
     t.trade_loop()
 

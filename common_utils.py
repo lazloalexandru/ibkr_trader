@@ -12,16 +12,22 @@ def contract(symbol):
     return c
 
 
-# ! [bracket]
-def BracketOrder(parentOrderId: int, action: str, quantity: float, limitPrice: float, takeProfitLimitPrice: float, stopLossPrice: float):
+def to_tick_price(x):
+    x = int(100 * x) / 100.0
+    return x
+
+
+def BracketOrder(parentOrderId: int,
+                 quantity: float,
+                 limitPrice: float,
+                 takeProfitLimitPrice: float,
+                 stopLossPrice: float):
     parent = Order()
     parent.orderId = parentOrderId
-    parent.action = action
-    parent.orderType = "MKT"
+    parent.action = "BUY"
+    parent.orderType = "LMT"
     parent.totalQuantity = quantity
-    parent.lmtPrice = limitPrice
-    # The parent and children orders will need this attribute set to False to prevent accidental executions.
-    # The LAST CHILD will have it set to True,
+    parent.lmtPrice = to_tick_price(limitPrice)
     parent.transmit = False
 
     takeProfit = Order()
@@ -29,7 +35,7 @@ def BracketOrder(parentOrderId: int, action: str, quantity: float, limitPrice: f
     takeProfit.action = "SELL"
     takeProfit.orderType = "LMT"
     takeProfit.totalQuantity = quantity
-    takeProfit.lmtPrice = takeProfitLimitPrice
+    takeProfit.lmtPrice = to_tick_price(takeProfitLimitPrice)
     takeProfit.parentId = parentOrderId
     takeProfit.transmit = False
 
@@ -37,12 +43,9 @@ def BracketOrder(parentOrderId: int, action: str, quantity: float, limitPrice: f
     stopLoss.orderId = parent.orderId + 2
     stopLoss.action = "SELL"
     stopLoss.orderType = "STP"
-    # Stop trigger price
-    stopLoss.auxPrice = stopLossPrice
+    stopLoss.auxPrice = to_tick_price(stopLossPrice)
     stopLoss.totalQuantity = quantity
     stopLoss.parentId = parentOrderId
-    # In this case, the low side order will be the last child being sent. Therefore, it needs to set this attribute to True
-    # to activate all its predecessors
     stopLoss.transmit = True
 
     bracketOrder = [parent, takeProfit, stopLoss]
