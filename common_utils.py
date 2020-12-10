@@ -1,5 +1,7 @@
 from ibapi.contract import Contract
 from ibapi.order import Order
+import pandas as pd
+from termcolor import colored
 
 
 def contract(symbol):
@@ -52,3 +54,38 @@ def BracketOrder(parentOrderId: int,
     return bracketOrder
 
 # ! [bracket]
+
+
+def gen_chart_data_prepared_for_ai(df, p):
+    if df is not None:
+        df.Time = pd.to_datetime(df.Time, format="%Y-%m-%d  %H:%M:%S")
+
+        idx = get_time_index(df, p['__chart_begin_hh'], p['__chart_begin_mm'], 0)
+        if idx is not None:
+            df = df[idx:]
+            df.reset_index(drop=True, inplace=True)
+
+        idx = get_time_index(df, p['__chart_end_hh'], p['__chart_end_mm'], 0)
+        if idx is not None:
+            df = df[:idx+1]
+            df.reset_index(drop=True, inplace=True)
+
+    return df
+
+
+def get_time_index(df, h, m, s):
+    idx = None
+
+    xtime = df.iloc[0]["Time"]
+    xtime = xtime.replace(hour=h, minute=m, second=s)
+
+    x_idx = df.index[df['Time'] == xtime].tolist()
+    n = len(x_idx)
+    if n == 1:
+        idx = x_idx[0]
+    elif n > 1:
+        print(colored("ERROR ... Intraday chart contains more than one bars with same time stamp!!!", color='red'))
+    else:
+        print(colored("Warning!!! ... Intraday chart contains no timestamp: " + str(xtime) + "   n: " + str(n), color='yellow'))
+
+    return idx

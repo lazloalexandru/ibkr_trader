@@ -1,25 +1,24 @@
 import datetime
-import readchar
 import queue
 import threading
 import time
-import pandas as pd
-import common_algos as ca
-import common_utils as cu
 import curses
+import torch
+import  numpy as np
+import pandas as pd
+
 from my_ibapi_app import IBApi
+from model import Net
 from watchlist import quotes
-import os
-
-
-__log_path = "logs"
+import common_utils as cu
+import chart
 
 
 def _run_loop(app):
     app.run()
 
 
-def _init_ibkr(id):
+def _init_ibkr(sw, id):
     app = IBApi()
 
     app.init_error()
@@ -42,57 +41,52 @@ def _init_ibkr(id):
     return app
 
 
-def get_next_order_id(app):
-    app.nextorderId = -1
-    app.reqIds(-1)
+def print_quote_info(sym_params):
+    qw = curses.newwin(2, curses.COLS, 0, 0)
 
-    while app.nextorderId < 0:
-        print('Waiting for order ID')
-        time.sleep(0.05)
+    qw.clear()
+    qw.addstr(0, 0, 'Quote', curses.color_pair(1))
+    qw.addstr(1, 0, sym_params['symbol'], curses.color_pair(3))
 
-    print("Next Order ID:", app.nextorderId)
+    initial_market_cap = round(sym_params['shares_outstanding'] * sym_params['base_price'])
+    qw.addstr(0, 8, 'MCap', curses.color_pair(1))
+    cg = 4 if initial_market_cap < 10 else 5
+    qw.addstr(1, 8, '%sM' % initial_market_cap, curses.color_pair(cg))
 
-    return app.nextorderId
+    qw.addstr(0, 15, 'Shares/Float', curses.color_pair(1))
+    cg = 4 if sym_params['float'] < 3 else 5
+    qw.addstr(1, 15, '%sM / %sM' % (sym_params['shares_outstanding'], sym_params['float']), curses.color_pair(cg))
+
+    qw.addstr(0, 30, 'News', curses.color_pair(1))
+    news = "-" if sym_params['news'] is None else sym_params['news']
+    qw.addstr(1, 30, '%s' % news, curses.color_pair(3))
+
+    qw.refresh()
 
 
-def _calc_bagholder_score_from_ibkr_chart(app, req_store, symbol, sw):
-    sw.addstr(0, 0, "Downloading " + symbol + " daily chart ...", curses.color_pair(1))
-    sw.refresh()
+def select_quote(scr):
+    idx = None
+    n = len(quotes)
 
-    app.data = []
-    app.reqHistoricalData(2000, cu.contract(symbol), "", '3 Y', '1 day', 'TRADES', 1, 1, False, [])
+    scr.clear()
+    scr.refresh()
 
-    xxx = None
-    counter = 0
-    while not app.wrapper.is_error() and xxx is None:
-        try:
-            xxx = req_store.get(timeout=1)
-        except queue.Empty:
-            counter += 1
-            if counter > 1:
-                counter = 0
+    if n > 0:
+        scr.addstr(4, 5, "Select Quote")
+        scr.addstr(5, 5, "(press a key between  1 .. " + str(n) + ")")
 
-            sss = "/" if counter == 1 else "\\"
-            sw.addstr(0, 33, sss, curses.color_pair(1))
-            sw.refresh()
-            xxx = None
+        for i in range(0, n):
+            scr.addstr(7 + i, 5, str(i+1) + " -> " + quotes[i]['symbol'])
 
-    while app.wrapper.is_error():
-        sw.clear()
-        message = symbol + "  --->  " + str(app.get_error(timeout=5))
-        sw.addstr(0, 0, message, curses.color_pair(2))
-        sw.refresh()
+        while idx not in range(0, n):
+            key_pressed = scr.getch()
+            idx = key_pressed - ord('1')
+            scr.refresh()
 
-    bs = None
+    scr.clear()
+    scr.refresh()
 
-    if len(app.data) > 0:
-        message = "Queried " + symbol + " Daily chart for " + str(len(app.data)) + " days"
-        sw.addstr(0, 0, message, curses.color_pair(1))
-        sw.refresh()
-        df = pd.DataFrame(app.data, columns=["Time", "Open", "Close", "High", "Low", "Volume"])
-        bs = ca.get_bagholder_score(df)
-
-    return bs
+    return idx
 
 
 def _server_clock(app, time_storage):
@@ -106,256 +100,178 @@ def _server_clock(app, time_storage):
     return requested_time
 
 
-def _add_indicators(df):
-    df['mav3'] = df['Close'].rolling(window=3).mean()
-    df['mav5'] = df['Close'].rolling(window=5).mean()
-    df['mav8'] = df['Close'].rolling(window=8).mean()
-    df['mav13'] = df['Close'].rolling(window=13).mean()
+def _info_box(df, label):
+    pw = curses.newwin(20, curses.COLS, 4, 0)
 
-    return df
+    pw.clear()
 
+    sd = 10
+    r = 0
 
-def get_index_of_min(df, start_idx, end_idx):
-    mn = df['Low'][start_idx]
-    idx = start_idx
+    ########################################################################
 
-    for i in range(start_idx+1, end_idx+1):
-        if df['Low'][i] < mn:
-            mn = df['Low'][i]
-            idx = i
+    pw.addstr(r, 0, 'AI  =>', curses.color_pair(1))
+    pw.addstr(r, 10, 'BUY', curses.color_pair(6))
+    pw.addstr(r, 20, 'SELL', curses.color_pair(6))
+    pw.addstr(r, 30, 'Label: %s' % label, curses.color_pair(6))
+    r += 2
 
-    return idx, mn  # str(df.loc[idx]['Time'].time())
+    ########################################################################
 
+    close = df.iloc[-1]['Close']
+    cg = 5 if close > trading_params['__min_close_price'] else 4
+    pw.addstr(r, 0, 'Price', curses.color_pair(1))
+    pw.addstr(r, sd, '%.2f$' % close, curses.color_pair(cg))
+    r += 1
 
-def get_index_of_max(df, start_idx, end_idx):
-    mx = df['High'][start_idx]
-    idx = start_idx
+    ########################################################################
 
-    for i in range(start_idx+1, end_idx+1):
-        if df['High'][i] > mx:
-            mx = df['High'][i]
-            idx = i
+    vol = df.iloc[-1]['Volume']
+    cg = 5
 
-    return idx, mx  # str(df.loc[idx]['Time'].time()), mx
+    pw.addstr(r, 0, '1MinVol', curses.color_pair(1))
+    pw.addstr(r, sd, '%sk' % round(vol/1000), curses.color_pair(cg))
+    r += 1
 
+    ########################################################################
 
-def get_pivots(df):
-    mm = "mav5"
-    ml = "mav8"
+    current_volume = sum(df['Volume'].tolist())
+    cg = 5
 
-    pivots = []
-    start_idx = df.index[20]
-    idx_prev = start_idx
+    pw.addstr(r, 0, 'Volume', curses.color_pair(1))
+    pw.addstr(r, sd, '%1.fM' % (current_volume / 1000000), curses.color_pair(cg))
+    r += 1
 
-    state_open = False
-    if df[mm][start_idx] > df[ml][start_idx]:
-        state_open = True
+    ########################################################################
 
-    n = len(df)
+    pxv = close * current_volume
+    cg = 5 if pxv > trading_params['min_volume_x_price'] else 4
+    pw.addstr(r, 0, 'PxV', curses.color_pair(1))
+    pw.addstr(r, sd, '%.2fM' % (pxv / 1000000), curses.color_pair(cg))
+    r += 1
 
-    for i in range(start_idx, n):
-        prev_state = state_open
+    ########################################################################
 
-        if df[mm][i] > df[ml][i]:
-            state_open = True
-        elif df[mm][i] < df[ml][i]:
-            state_open = False
-
-        if prev_state == True and state_open == False:
-            max_idx, val = get_index_of_max(df, idx_prev, i)
-            pivots.append([val, True, df['Time'][max_idx], max_idx])
-            idx_prev = i
-        elif prev_state == False and state_open == True:
-            min_idx, val = get_index_of_min(df, idx_prev, i)
-            pivots.append([val, False, df['Time'][min_idx], min_idx])
-            idx_prev = i
-
-    return pivots
+    pw.refresh()
 
 
-def save_trade_log(order_id, symbol, action, time_, price, size):
-    path = __log_path + "\\" + "trades.txt"
+def _asses_1min_chart(app, req_store, model):
+    sw = curses.newwin(1, curses.COLS, curses.LINES - 2, 0)
 
-    if os.path.isfile(path):
-        df = pd.read_csv(path)
+    xxx = None
+    while not app.wrapper.is_error() and xxx is None:
+        try:
+            xxx = req_store.get(timeout=1)
+        except queue.Empty:
+            xxx = None
+
+    if len(app.data) == 0:
+        sw.addstr(0, 0, "No data", curses.color_pair(2))
+        sw.refresh()
     else:
-        df = pd.DataFrame(columns=['sym', 'time', 'action', 'price', 'size'])
+        df = pd.DataFrame(app.data, columns=["Time", "Open", "Close", "High", "Low", "Volume"])
+        _t = pd.to_datetime(df.iloc[-1]["Time"], format="%Y%m%d  %H:%M:%S")
 
-    data = {
-        'sym': symbol,
-        'time': time_,
-        'action': action,
-        'price': price,
-        'size': size,
-        'orderid': order_id
-    }
+        with torch.no_grad():
+            df = cu.gen_chart_data_prepared_for_ai(df, trading_params)
+            state = chart.create_padded_state_vector(df)
 
-    df = df.append(data, ignore_index=True)
-    print(df)
+            state = np.reshape(state, (5, 390))
+            state = torch.tensor(state, dtype=torch.float).unsqueeze(0).unsqueeze(0).to("cuda")
 
-    df.to_csv(path, index=False)
+            buy_output = model(state)
+            res = buy_output.max(1)[1].view(1, 1)
+            predicted_label = res[0][0].to("cpu").numpy()
+
+            _info_box(df, predicted_label)
 
 
-def pattern_intact(df, pivots):
-    if pivots[-1][1]:
-        res = True
+def main(scr):
+    curses.curs_set(0)
+    curses.cbreak()
+    curses.resize_term(30, 45)
+
+    scr.nodelay(1)
+    scr.timeout(1)
+
+    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+    curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_RED)
+    curses.init_pair(5, curses.COLOR_WHITE, curses.COLOR_GREEN)
+    curses.init_pair(6, curses.COLOR_BLACK, curses.COLOR_WHITE)
+
+    sw1 = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
+    sw2 = curses.newwin(1, curses.COLS, curses.LINES - 2, 0)
+    sw3 = curses.newwin(1, curses.COLS, curses.LINES - 3, 0)
+
+    if len(quotes) == 0:
+        sw1.addstr(0, 0, "No quotes in watchlist. See \'watchilist.py\' file.", curses.color_pair(3))
+        sw1.refresh()
     else:
-        start_idx = pivots[-1][3]
-        end_idx = df.index[-1]
+        selected_id = select_quote(scr)
 
-        res = True
-        for i in range(start_idx, end_idx):
-            res = res and df.iloc[-1]["High"] < pivots[-2][0]
+        sw1.addstr(0, 0, "Connecting to TWS ...", curses.color_pair(1))
+        sw1.refresh()
 
-    return res
+        app = _init_ibkr(sw3, selected_id)
+        time_queue = app.init_time()
+        symbol = quotes[selected_id]['symbol']
+        req_store = app.init_req_queue()
 
+        sw1.clear()
+        sw1.addstr(0, 0, "Connected!", curses.color_pair(1))
+        sw1.refresh()
 
-class Trader:
-    def __init__(self, sym_id):
-        self.sym_id = sym_id
-        self.app = _init_ibkr(sym_id)
-        self.time_queue = self.app.init_time()
-        self.req_store = self.app.init_req_queue()
-        self.in_a_trade = False
-        self.braket = None
-        self.limit = None
+        app.data = []
 
-    def server_time(self):
-        xxx = None
-        unix_time = _server_clock(self.app, self.time_queue)
-        if unix_time is not None:
+        app.reqHistoricalData(2001, cu.contract(symbol), "", '1 D', '1 min', 'TRADES', 0, 1, True, [])
+
+        sw2.clear()
+        sw2.refresh()
+
+        model = Net(trading_params[])
+
+        key_pressed = None
+        while key_pressed != 17:
+            sw1 = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
+
+            unix_time = _server_clock(app, time_queue)
             current_time = datetime.datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
-            xxx = current_time
-        return xxx
+            sw1.addstr(0, 0, current_time, curses.color_pair(1))
+            sw1.addstr(0, 30, "Quit [Ctrl+Q]", curses.color_pair(1))
+            sw1.refresh()
 
-    def get_chart_data(self):
-        xxx = None
-        df = None
+            print_quote_info(quotes[selected_id])
+            _asses_1min_chart(app, req_store)
 
-        while not self.app.wrapper.is_error() and xxx is None:
-            try:
-                xxx = self.req_store.get(timeout=1)
-            except queue.Empty:
-                xxx = None
-
-        if len(self.app.data) == 0:
-            print("No Data ...")
-            while self.app.wrapper.is_error():
-                msg = self.app.get_error(timeout=5)
-                print(msg)
-        else:
-            df = pd.DataFrame(self.app.data, columns=["Time", "Open", "Close", "High", "Low", "Volume"])
-            _add_indicators(df)
-
-        return df
-
-    def trade_loop(self):
-        symbol = quotes[self.sym_id]['symbol']
-        self.app.data = []
-        contract = cu.contract(symbol)
-        self.app.reqHistoricalData(2001, contract, "", '1 D', '1 min', 'TRADES', 0, 1, True, [])
-
-        can_enter = False
-        valid_pattern = False
-        last_pivot_idx = 0
-        trend = ""
-
-        while True:
-            print("\n", symbol)
-
-            df = self.get_chart_data()
-
-            if df is not None:
-                pivots = get_pivots(df)
-                num_pivots = len(pivots)
-
-                if num_pivots >= 2:
-                    print(pivots[-2:])
-
-                    if pivots[-1][1]:  # last pivot was a high
-                        trend = "DOWNTREND"
-                        valid_pattern = False
-                        can_enter = False
-                    else:  # last pivot was a low
-                        trend = "UPTREND"
-                        # if pattern_intact(df, pivots):
-                        valid_pattern = True
-                        trend = trend + "BUY @ " + str(pivots[-2][0])
-
-                close = df.iloc[-1]["Close"]
-
-                if not self.in_a_trade:
-                    if valid_pattern:
-                        if df.iloc[-1]["Close"] >= pivots[-2][0]:
-                            if last_pivot_idx != num_pivots:
-                                if df.iloc[-1]["mav3"] > df.iloc[-1]["mav5"]:
-                                    order_id = get_next_order_id(self.app)
-
-                                    last_pivot_idx = num_pivots
-                                    print(" BUY@", pivots[-2][0])
-
-                                    save_trade_log(order_id, symbol, "BUY", df.iloc[-1]["Time"], pivots[-2][0], 100)
-
-                                    buyPrice = cu.to_tick_price(close * 1.01)
-                                    profitTakePrice = cu.to_tick_price(buyPrice * 1.2)
-                                    stopPrice = cu.to_tick_price(buyPrice * 0.95)
-
-                                    print("Buy:", buyPrice, "Profit:", profitTakePrice, "STOP:", stopPrice)
-
-                                    self.braket = cu.BracketOrder(parentOrderId=order_id,
-                                                                  quantity=100,
-                                                                  limitPrice=buyPrice,
-                                                                  takeProfitLimitPrice=profitTakePrice,
-                                                                  stopLossPrice=stopPrice)
-
-                                    print("Orders:", self.braket[0].orderId, self.braket[1].orderId, self.braket[1].orderId)
-
-                                    self.app.placeOrder(self.braket[0].orderId, contract, self.braket[0])
-                                    self.app.placeOrder(self.braket[1].orderId, contract, self.braket[1])
-                                    self.app.placeOrder(self.braket[2].orderId, contract, self.braket[2])
-
-                                    self.in_a_trade = True
-                else:
-                    print("In a Trade!")
-
-                    if df.iloc[-1]["mav3"] < df.iloc[-1]["mav5"]:
-                        print("SELL")
-                        sellPrice = cu.to_tick_price(close * 1.2)
-                        self.braket[2].auxPrice = sellPrice
-                        self.app.placeOrder(self.braket[2].orderId, contract, self.braket[2])
-
-                        save_trade_log(self.braket[2].orderId, symbol, "SELL", df.iloc[-1]["Time"], df.iloc[-1]["Close"], 100)
-                        self.in_a_trade = False
-
-                print(trend, "   ", last_pivot_idx, num_pivots, "  ", df.iloc[-1]["Close"])
-
-            time.sleep(0.5)
+            key_pressed = scr.getch()
 
 
-def select_stock():
-    i = 0
-    num_quotes = len(quotes)
-    if num_quotes > 0:
-        print("Press key between ", 1, "..", num_quotes)
+trading_params = {
+        '__chart_begin_hh': 9,
+        '__chart_begin_mm': 30,
+        '__chart_end_hh': 15,
+        '__chart_end_mm': 59,
 
-        for q in quotes:
-            i += 1
-            print("     %s)" % i, q['symbol'])
+        '__min_close_price': 1.5,
+        '__max_close_price': 20,
 
-        selected_id = int(readchar.readchar())
-        while not 1 <= selected_id <= num_quotes:
-            selected_id = int(readchar.readchar())
+        'trading_begin_hh': 9,
+        'trading_begin_mm': 40,
+        'last_entry_hh': 15,
+        'last_entry_mm': 55,
 
-        print("SelectedId:", selected_id)
+        'stop': -5,
 
-        return selected_id
+        'min_volume': 0,
+        'min_volume_x_price': 10000000,
+
+        'num_classes': 7
+}
+
+curses.wrapper(main)
 
 
-def main():
-
-    selected_id = select_stock()
-    t = Trader(selected_id-1)
-    t.trade_loop()
 
 
-main()
