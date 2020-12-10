@@ -5,7 +5,7 @@ import threading
 import time
 import pandas as pd
 import common_algos as ca
-import common_utils as cu
+import common as cu
 import curses
 from my_ibapi_app import IBApi
 from watchlist import quotes
