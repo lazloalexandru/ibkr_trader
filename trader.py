@@ -10,7 +10,7 @@ from watchlist import quotes
 import common as cu
 import chart
 import gui
-
+from gui import __NORMAL
 
 __IN_A_TRADE = False
 __BRACKET_ORDER = None
@@ -93,18 +93,19 @@ def _trade_chart(app, req_store, model):
 def main(scr):
     curses.curs_set(0)
     curses.cbreak()
-    curses.resize_term(20, 50)
+    curses.resize_term(20, 40)
 
     scr.nodelay(1)
     scr.timeout(1)
 
     curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_RED)
     curses.init_pair(2, curses.COLOR_RED, curses.COLOR_YELLOW)
-    curses.init_pair(3, curses.COLOR_WHITE, curses.COLOR_YELLOW)
-    curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+    curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_WHITE)
     curses.init_pair(5, curses.COLOR_GREEN, curses.COLOR_BLACK)
     curses.init_pair(6, curses.COLOR_GREEN, curses.COLOR_WHITE)
     curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_GREEN)
+    curses.init_pair(8, curses.COLOR_WHITE, curses.COLOR_BLACK)
 
     sw1 = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
     sw2 = curses.newwin(1, curses.COLS, curses.LINES - 2, 0)
@@ -116,7 +117,7 @@ def main(scr):
     else:
         selected_id = gui.select_quote(scr)
 
-        sw1.addstr(0, 0, "Connecting to TWS ...", curses.color_pair(4))
+        sw1.addstr(0, 0, "Connecting to TWS ...", curses.color_pair(__NORMAL))
         sw1.refresh()
 
         app = tws.init_tws(sw3, selected_id)
@@ -127,7 +128,7 @@ def main(scr):
         req_store = app.init_req_queue()
 
         sw1.clear()
-        sw1.addstr(0, 0, "Connected!", curses.color_pair(4))
+        sw1.addstr(0, 0, "Connected!", curses.color_pair(__NORMAL))
         sw1.refresh()
 
         app.data = []
@@ -150,8 +151,8 @@ def main(scr):
 
             unix_time = tws.server_clock(app, time_queue)
             current_time = datetime.datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
-            sw1.addstr(0, 0, current_time, curses.color_pair(4))
-            sw1.addstr(0, 30, "Quit [Ctrl+Q]", curses.color_pair(4))
+            sw1.addstr(0, 0, current_time, curses.color_pair(__NORMAL))
+            sw1.addstr(0, 25, "Quit [Ctrl+Q]", curses.color_pair(__NORMAL))
             sw1.refresh()
 
             gui.print_quote_info(quotes[selected_id])
