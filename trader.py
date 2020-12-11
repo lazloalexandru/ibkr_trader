@@ -1,4 +1,3 @@
-import datetime
 import queue
 import curses
 import torch
@@ -10,56 +9,72 @@ from watchlist import quotes
 import common as cu
 import chart
 import gui
-from gui import __NORMAL
-
-__IN_A_TRADE = False
-__BRACKET_ORDER = None
-__CONTRACT = None
-__SYMBOL = None
+from gui import __TEXT_COLOR
 
 
-def trade(df, app, label):
-    global __IN_A_TRADE
-    global __BRACKET_ORDER
-    global __CONTRACT
-    global __SYMBOL
+def init_model(p):
+    model = Net(p['num_classes']).to("cuda")
+    model.load_state_dict(torch.load(p['model_params_path']))
+    model.eval()
 
+    return model
+
+
+def init_tws_connection(w, ibkr_message_window, connection_id):
+    w.addstr(0, 0, "Connecting to TWS ...", curses.color_pair(__TEXT_COLOR))
+    w.refresh()
+
+    app = tws.init_tws(ibkr_message_window, connection_id)
+
+    app.data = []
+
+    time_queue = app.init_time()
+    req_store = app.init_req_queue()
+
+    w.clear()
+    w.addstr(0, 0, "Connected!", curses.color_pair(__TEXT_COLOR))
+    w.refresh()
+
+    return app, time_queue, req_store
+
+
+def trade(df, label, app, p):
     close = df.iloc[-1]["Close"]
 
-    if __IN_A_TRADE:
+    if p['position_size'] > 0:
         if label <= 3:
             sellPrice = cu.to_tick_price(close * 1.2)
-            __BRACKET_ORDER[2].auxPrice = sellPrice
-            app.placeOrder(__BRACKET_ORDER[2].orderId, __CONTRACT, __BRACKET_ORDER[2])
+            p['bracket_order'][2].auxPrice = sellPrice
+            app.placeOrder(p['bracket_order'].orderId, p['contract'], p['bracket_order'][2])
 
-            cu.save_trade_log(__BRACKET_ORDER[2].orderId, __SYMBOL, "SELL", df.iloc[-1]["Time"], df.iloc[-1]["Close"], 100)
-            __IN_A_TRADE = False
+            cu.save_trade_log(p['bracket_order'][2].orderId, p['symbol'], "SELL", df.iloc[-1]["Time"], close, 100)
+            p['position_size'] = 0
     else:
-        if label == 6:
+        if label == 9:
             order_id = tws.get_next_order_id(app)
 
-            buyPrice = cu.to_tick_price(close * 1.01)
+            buyPrice = cu.to_tick_price(close * 1.03)
             profitTakePrice = cu.to_tick_price(buyPrice * 1.2)
-            stopPrice = cu.to_tick_price(buyPrice * 0.95)
+            stopPrice = cu.to_tick_price(buyPrice * 0.9)
 
             print("Buy:", buyPrice, "Profit:", profitTakePrice, "STOP:", stopPrice)
 
-            __BRACKET_ORDER = cu.BracketOrder(
+            p['bracket_order'] = cu.BracketOrder(
                 parentOrderId=order_id,
                 quantity=100,
                 limitPrice=buyPrice,
                 takeProfitLimitPrice=profitTakePrice,
                 stopLossPrice=stopPrice)
 
-            app.placeOrder(__BRACKET_ORDER[0].orderId, __CONTRACT, __BRACKET_ORDER[0])
-            app.placeOrder(__BRACKET_ORDER[1].orderId, __CONTRACT, __BRACKET_ORDER[1])
-            app.placeOrder(__BRACKET_ORDER[2].orderId, __CONTRACT, __BRACKET_ORDER[2])
+            app.placeOrder(p['bracket_order'][0].orderId, p['contract'], p['bracket_order'][0])
+            app.placeOrder(p['bracket_order'][1].orderId, p['contract'], p['bracket_order'][1])
+            app.placeOrder(p['bracket_order'][2].orderId, p['contract'], p['bracket_order'][2])
 
-            __IN_A_TRADE = True
-            cu.save_trade_log(order_id, __SYMBOL, "BUY", df.iloc[-1]["Time"], buyPrice, 100)
+            p['position_size'] = 100
+            cu.save_trade_log(order_id, p['symbol'], "BUY", df.iloc[-1]["Time"], buyPrice, 100)
 
 
-def _trade_chart(app, req_store, model):
+def trade_chart(app, req_store, p):
     sw = curses.newwin(1, curses.COLS, curses.LINES - 2, 0)
 
     xxx = None
@@ -77,112 +92,77 @@ def _trade_chart(app, req_store, model):
         _t = pd.to_datetime(df.iloc[-1]["Time"], format="%Y%m%d  %H:%M:%S")
 
         with torch.no_grad():
-            df = chart.gen_chart_prepared_for_ai(df, params)
+            df = chart.gen_chart_prepared_for_ai(df, p)
 
             state = chart.create_state_vector(df, debug=True)
             state = torch.tensor(state, dtype=torch.float).unsqueeze(0).unsqueeze(0).to("cuda")
 
-            output = model(state)
+            output = p['model'](state)
             res = output.max(1)[1].view(1, 1)
             predicted_label = res[0][0].to("cpu").numpy()
-            trade(df, app, predicted_label)
+            trade(df, app, predicted_label, p)
 
-            gui.show_trading_info(df, predicted_label, params)
+            gui.print_quote_info(df, p)
+
+            gui.show_trading_info(df, predicted_label, output.to("cpu").numpy()[0], p)
 
 
 def main(scr):
-    curses.curs_set(0)
-    curses.cbreak()
-    curses.resize_term(20, 40)
+    main_window, status_bar, tws_message_window = gui.init_curses(scr)
+    gui.init_colors()
 
-    scr.nodelay(1)
-    scr.timeout(1)
-
-    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_RED)
-    curses.init_pair(2, curses.COLOR_RED, curses.COLOR_YELLOW)
-    curses.init_pair(3, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-    curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_WHITE)
-    curses.init_pair(5, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(6, curses.COLOR_GREEN, curses.COLOR_WHITE)
-    curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_GREEN)
-    curses.init_pair(8, curses.COLOR_WHITE, curses.COLOR_BLACK)
-
-    sw1 = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
-    sw2 = curses.newwin(1, curses.COLS, curses.LINES - 2, 0)
-    sw3 = curses.newwin(1, curses.COLS, curses.LINES - 3, 0)
-
-    if len(quotes) == 0:
-        sw1.addstr(0, 0, "No quotes in watchlist. See \'watchilist.py\' file.", curses.color_pair(3))
-        sw1.refresh()
+    if quotes is None or len(quotes) == 0:
+        main_window.addstr(0, 0, "No quotes in watchlist. See \'watchilist.py\' file.", curses.color_pair(3))
+        main_window.refresh()
     else:
+        p = get_params()
+
         selected_id = gui.select_quote(scr)
 
-        sw1.addstr(0, 0, "Connecting to TWS ...", curses.color_pair(__NORMAL))
-        sw1.refresh()
+        p['symbol'] = quotes[selected_id]
+        p['contract'] = cu.contract(p['symbol'])
+        p['position_size'] = 0
 
-        app = tws.init_tws(sw3, selected_id)
-        time_queue = app.init_time()
+        app, time_queue, req_store = init_tws_connection(main_window, tws_message_window, selected_id)
+        gui.print_quote_name(p['symbol'])
+        app.reqHistoricalData(2001, p['contract'], "", '1 D', '1 min', 'TRADES', 0, 1, True, [])
+        gui.clear_window(status_bar)
 
-        global __SYMBOL
-        __SYMBOL = quotes[selected_id]['symbol']
-        req_store = app.init_req_queue()
-
-        sw1.clear()
-        sw1.addstr(0, 0, "Connected!", curses.color_pair(__NORMAL))
-        sw1.refresh()
-
-        app.data = []
-
-        app.reqHistoricalData(2001, cu.contract(__SYMBOL), "", '1 D', '1 min', 'TRADES', 0, 1, True, [])
-
-        sw2.clear()
-        sw2.refresh()
-
-        global __CONTRACT
-        __CONTRACT = cu.contract(__SYMBOL)
-
-        model = Net(params['num_classes']).to("cuda")
-        model.load_state_dict(torch.load(params['model_params_path']))
-        model.eval()
+        p['model'] = init_model(p)
 
         key_pressed = None
         while key_pressed != 17:
-            sw1 = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
-
-            unix_time = tws.server_clock(app, time_queue)
-            current_time = datetime.datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
-            sw1.addstr(0, 0, current_time, curses.color_pair(__NORMAL))
-            sw1.addstr(0, 25, "Quit [Ctrl+Q]", curses.color_pair(__NORMAL))
-            sw1.refresh()
-
-            gui.print_quote_info(quotes[selected_id])
-            _trade_chart(app, req_store, model)
-
+            gui.show_status_bar(tws.server_clock(app, time_queue))
+            trade_chart(app, req_store, p)
             key_pressed = scr.getch()
 
 
-params = {
-        '__chart_begin_hh': 9,
-        '__chart_begin_mm': 30,
-        '__chart_end_hh': 15,
-        '__chart_end_mm': 59,
+def get_params():
+    params = {
+            '__chart_begin_hh': 9,
+            '__chart_begin_mm': 30,
+            '__chart_end_hh': 15,
+            '__chart_end_mm': 59,
 
-        '__min_close_price': 1.5,
-        '__max_close_price': 20,
+            '__min_close_price': 1.5,
+            '__max_close_price': 20,
 
-        'trading_begin_hh': 9,
-        'trading_begin_mm': 40,
-        'last_entry_hh': 15,
-        'last_entry_mm': 55,
+            'trading_begin_hh': 9,
+            'trading_begin_mm': 40,
+            'last_entry_hh': 15,
+            'last_entry_mm': 55,
 
-        'stop': -5,
+            'stop': -5,
 
-        'min_volume': 0,
-        'min_volume_x_price': 10000000,
+            'min_volume': 0,
+            'min_volume_x_price': 10000000,
 
-        'num_classes': 7,
-        'model_params_path': 'model_params\\checkpoint_100'
-}
+            'num_classes': 7,
+            'model_params_path': 'model_params\\checkpoint_10'
+    }
+
+    return params
+
 
 curses.wrapper(main)
 

@@ -1,17 +1,2 @@
-quotes = [
-    {
-        'symbol': 'SLS'
-    },
-    {
-        'symbol': 'IMMP'
-    },
-    {
-        'symbol': 'EGHT'
-    },
-    {
-        'symbol': 'TGTX'
-    },
-    {
-        'symbol': 'AI'
-    }
-]
+
+quotes = ['NH', 'VTVT', 'FRSX', 'SNOA', 'LIFE', 'ADTX' ]

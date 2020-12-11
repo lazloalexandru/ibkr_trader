@@ -1,16 +1,20 @@
 import queue
 
 from ibapi.common import ListOfPriceIncrements
-from termcolor import colored
 from ibapi.wrapper import OrderId
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper, BarData
 
 
 class IBApi(EWrapper, EClient):
-    def __init__(self):
+    def __init__(self, message_window=None):
         EClient.__init__(self, self)
+        self.w = message_window
+
         self.data = []
+        self.my_time_queue = None
+        self.my_errors_queue = None
+        self.req_queue = None
 
     def init_time(self):
         time_queue = queue.Queue()
@@ -41,18 +45,17 @@ class IBApi(EWrapper, EClient):
     def currentTime(self, server_time):
         self.my_time_queue.put(server_time)
 
-
     def nextValidId(self, orderId: int):
         super().nextValidId(orderId)
         self.nextorderId = orderId
 
     def error(self, id, errorCode, errorString):
         if errorCode != 2104 and errorCode != 2106 and errorCode != 2158:
-            errormessage = "%d code %d -> %s" % (id, errorCode, errorString)
-            # self.sw.addstr(0, 0, errormessage)
-            # self.sw.refresh()
+            error_message = "%d code %d -> %s" % (id, errorCode, errorString)
+            self.w.addstr(1, 0, error_message)
+            self.w.refresh()
 
-            self.my_errors_queue.put(errormessage)
+            self.my_errors_queue.put(error_message)
 
     def historicalData(self, reqId, bar):
         # date_time_obj = datetime.datetime.strptime(bar.date, '%Y%m%d')
@@ -86,11 +89,12 @@ class IBApi(EWrapper, EClient):
 
         super().orderStatus(orderId, status, filled, remaining, avgFillPrice, permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice)
 
-        print("OrderStatus. Id:", orderId, "Status:", status, "Filled:", filled,
-        "Remaining:", remaining, "AvgFillPrice:", avgFillPrice,
-        "PermId:", permId, "ParentId:", parentId, "LastFillPrice:",
-        lastFillPrice, "ClientId:", clientId, "WhyHeld:",
-        whyHeld, "MktCapPrice:", mktCapPrice)
+        text = "[" + str(orderId) + "] " + str(status) + " F: " + str(filled) + " R: " + str(remaining) + "AvgP:" + str(avgFillPrice)
+        self.w.addstr(0, 0, text)
+        self.w.refresh()
+
+        print("OrderStatus. Id:", orderId, "Status:", status, "Filled:", filled, "Remaining:", remaining,
+              "AvgFillPrice:", avgFillPrice, "ParentId:", parentId, "LastFillPrice:", lastFillPrice, "ClientId:", clientId)
 
     def openOrderEnd(self):
         super().openOrderEnd()

@@ -9,8 +9,8 @@ def _run_loop(app):
     app.run()
 
 
-def init_tws(sw, id):
-    app = IBApi()
+def init_tws(ibkr_message_window, id):
+    app = IBApi(ibkr_message_window)
 
     app.init_error()
 
