@@ -1,6 +1,7 @@
 import curses
 import datetime
 from watchlist import quotes
+import numpy as np
 
 __TEXT_COLOR = 8
 __VARIABLE_COLOR = 3
@@ -86,12 +87,11 @@ def get_label_description(label):
 
 
 def _show_label_stats(window, row, probability, label, color):
-    # window.addstr(row, 12, get_label_description(label), curses.color_pair(__TEXT_COLOR))
     window.addstr(row, 2, str(label) + "    ->        ", curses.color_pair(color))
     window.addstr(row, 17, '%.1f' % (100*probability) + " %", curses.color_pair(color))
 
 
-def show_trading_info(df, label, probabilities, p):
+def show_trading_info(label, probabilities, p):
     pw = curses.newwin(11, curses.COLS, 3, 0)
 
     pw.clear()
@@ -119,19 +119,20 @@ def show_trading_info(df, label, probabilities, p):
         if label == label_id:
             color = __HIGHLIGHT_COLOR
 
-        _show_label_stats(pw, r, 1 - probabilities[label_id] / total, label_id, color)
+        _show_label_stats(pw, r, np.exp(probabilities[label_id]), label_id, color)
         r += 1
 
     pw.refresh()
 
 
-def show_status_bar(unix_time):
-    sw1 = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
+def show_system_status(unix_time):
+    if unix_time is not None:
+        w = curses.newwin(1, curses.COLS, curses.LINES - 1, 0)
 
-    current_time = datetime.datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
-    sw1.addstr(0, 0, current_time, curses.color_pair(__TEXT_COLOR))
-    sw1.addstr(0, 25, "Quit [Ctrl+Q]", curses.color_pair(__TEXT_COLOR))
-    sw1.refresh()
+        current_time = datetime.datetime.utcfromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
+        w.addstr(0, 0, current_time, curses.color_pair(__TEXT_COLOR))
+        w.addstr(0, 25, "Quit [Ctrl+Q]", curses.color_pair(__TEXT_COLOR))
+        w.refresh()
 
 
 def init_colors():

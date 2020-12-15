@@ -1,2 +1,2 @@
 
-quotes = ['NH', 'VTVT', 'FRSX', 'SNOA', 'LIFE', 'ADTX' ]
+quotes = ['BTWN', 'MVIS', 'ANCN', 'BCDA', 'ABUS', 'VERU']

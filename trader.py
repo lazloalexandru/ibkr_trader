@@ -38,19 +38,27 @@ def init_tws_connection(w, ibkr_message_window, connection_id):
     return app, time_queue, req_store
 
 
-def trade(df, label, app, p):
+def trade(df, label, p):
+    app = p['app']
     close = df.iloc[-1]["Close"]
+
+    ######################## DEBUG #################################################
+    p['status_bar'].clear()
+    text = str(p['position_size']) + " " + str(label)
+    p['status_bar'].addstr(0, 0, text, curses.color_pair(__TEXT_COLOR))
+    p['status_bar'].refresh()
+    ################################################################################
 
     if p['position_size'] > 0:
         if label <= 3:
             sellPrice = cu.to_tick_price(close * 1.2)
             p['bracket_order'][2].auxPrice = sellPrice
-            app.placeOrder(p['bracket_order'].orderId, p['contract'], p['bracket_order'][2])
+            app.placeOrder(p['bracket_order'][2].orderId, p['contract'], p['bracket_order'][2])
 
             cu.save_trade_log(p['bracket_order'][2].orderId, p['symbol'], "SELL", df.iloc[-1]["Time"], close, 100)
             p['position_size'] = 0
     else:
-        if label == 9:
+        if label >= 5:
             order_id = tws.get_next_order_id(app)
 
             buyPrice = cu.to_tick_price(close * 1.03)
@@ -74,21 +82,21 @@ def trade(df, label, app, p):
             cu.save_trade_log(order_id, p['symbol'], "BUY", df.iloc[-1]["Time"], buyPrice, 100)
 
 
-def trade_chart(app, req_store, p):
+def trade_chart(req_store, p):
     sw = curses.newwin(1, curses.COLS, curses.LINES - 2, 0)
 
     xxx = None
-    while not app.wrapper.is_error() and xxx is None:
+    while not p['app'].wrapper.is_error() and xxx is None:
         try:
             xxx = req_store.get(timeout=1)
         except queue.Empty:
             xxx = None
 
-    if len(app.data) == 0:
+    if len(p['app'].data) == 0:
         sw.addstr(0, 0, "No data", curses.color_pair(2))
         sw.refresh()
     else:
-        df = pd.DataFrame(app.data, columns=["Time", "Open", "Close", "High", "Low", "Volume"])
+        df = pd.DataFrame(p['app'].data, columns=["Time", "Open", "Close", "High", "Low", "Volume"])
         _t = pd.to_datetime(df.iloc[-1]["Time"], format="%Y%m%d  %H:%M:%S")
 
         with torch.no_grad():
@@ -100,11 +108,11 @@ def trade_chart(app, req_store, p):
             output = p['model'](state)
             res = output.max(1)[1].view(1, 1)
             predicted_label = res[0][0].to("cpu").numpy()
-            trade(df, app, predicted_label, p)
+            trade(df, predicted_label, p)
 
             gui.print_quote_info(df, p)
 
-            gui.show_trading_info(df, predicted_label, output.to("cpu").numpy()[0], p)
+            gui.show_trading_info(predicted_label, output.to("cpu").numpy()[0], p)
 
 
 def main(scr):
@@ -122,6 +130,7 @@ def main(scr):
         p['symbol'] = quotes[selected_id]
         p['contract'] = cu.contract(p['symbol'])
         p['position_size'] = 0
+        p['status_bar'] = status_bar
 
         app, time_queue, req_store = init_tws_connection(main_window, tws_message_window, selected_id)
         gui.print_quote_name(p['symbol'])
@@ -129,11 +138,12 @@ def main(scr):
         gui.clear_window(status_bar)
 
         p['model'] = init_model(p)
+        p['app'] = app
 
         key_pressed = None
         while key_pressed != 17:
-            gui.show_status_bar(tws.server_clock(app, time_queue))
-            trade_chart(app, req_store, p)
+            gui.show_system_status(tws.server_clock(app, time_queue))
+            trade_chart(req_store, p)
             key_pressed = scr.getch()
 
 
