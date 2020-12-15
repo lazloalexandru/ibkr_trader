@@ -113,7 +113,6 @@ def show_trading_info(label, probabilities, p):
     pw.addstr(r, 10, get_label_description(label), curses.color_pair(label + 1))
     r += 2
 
-    total = sum(probabilities)
     for label_id in range(7):
         color = __TEXT_COLOR
         if label == label_id:
